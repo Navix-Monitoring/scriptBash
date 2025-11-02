@@ -48,6 +48,30 @@ aws ec2 authorize-security-group-ingress \
  --port 22 \
  --cidr 0.0.0.0/0
 
+aws ec2 authorize-security-group-ingress \
+ --group-id $sgId \
+ --protocol tcp \
+ --port 80 \
+ --cidr 0.0.0.0/0
+
+aws ec2 authorize-security-group-ingress \
+ --group-id $sgId \
+ --protocol tcp \
+ --port 8080 \
+ --cidr 0.0.0.0/0
+
+aws ec2 authorize-security-group-ingress \
+ --group-id $sgId \
+ --protocol tcp \
+ --port 3306 \
+ --cidr 0.0.0.0/0
+
+aws ec2 authorize-security-group-ingress \
+ --group-id $sgId \
+ --protocol tcp \
+ --port 3333 \
+ --cidr 0.0.0.0/0
+
 # ====== CRIAÇÃO DA CHAVE PEM ======
 nomeChavePem="minhachave-$sufixo"
 aws ec2 create-key-pair \
