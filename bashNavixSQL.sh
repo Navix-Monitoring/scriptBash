@@ -62,152 +62,49 @@ aws ec2 create-key-pair \
  --output text > "$nomeChavePem.pem"
 chmod 400 "$nomeChavePem.pem"
 
-# ====== SCRIPT DE INICIALIZAÇÃO EC2 PRO BANCO DE DADOS======
-read -r -d '' scriptEC2 <<'EOF_USERDATA'
+# ====== SCRIPT DE INICIALIZAÇÃO (SOFTWARE) ======
+scriptEC2='
 #!/bin/bash
 set -e
+echo "Atualizando pacotes do sistema..."
 sudo apt update -y
-sudo apt install -y docker.io
-sudo systemctl enable docker
-sudo systemctl start docker
+echo "Pacotes atualizados."
 
-mkdir -p /home/ubuntu/navix-banco
-cd /home/ubuntu/navix-banco
+echo "Instalando dependências..."
+sudo apt install -y curl gnupg lsb-release ca-certificates apt-transport-https software-properties-common
+echo "Dependências instaladas."
 
-# ===== Script SQL =====
-cat <<'EOF_SQL' > navix.sql
--- DDL (Data Definition Language)
-DROP DATABASE IF EXISTS navix;
-CREATE DATABASE IF NOT EXISTS navix;
-USE navix;
+# ===== Docker =====
+echo "Verificando se o Docker está instalado..."
+if ! command -v docker &> /dev/null; then
+    echo "Instalando Docker..."
+    sudo mkdir -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+    https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+    sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    sudo apt update -y
+    sudo apt install -y docker-ce docker-ce-cli containerd.io compose-plugin
+    sudo systemctl enable docker
+    sudo systemctl start docker
+    echo "Docker instalado e iniciado."
+else
+    echo "Docker já instalado."
+fi
 
-CREATE TABLE cargo(
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    titulo VARCHAR(30)
-);
+# ===== Usuário sysadmin =====
+echo "Verificando se o usuário sysadmin existe..."
+if ! id "sysadmin" &>/dev/null; then
+    echo "Usuário sysadmin não encontrado. Criando o usuário..."
+    sudo useradd -m sysadmin
+    echo "sysadmin:senha123" | sudo chpasswd
+    echo "Usuário sysadmin criado e senha definida."
+else
+    echo "Usuário sysadmin já existe."
+fi
 
-CREATE TABLE empresa(
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    razaoSocial VARCHAR(50),
-    cnpj VARCHAR(14),
-    codigo_ativacao VARCHAR(20)
-);
-
-CREATE TABLE endereco(
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    rua VARCHAR(50),
-    numero INT,
-    cep CHAR(8),
-    bairro VARCHAR(30),
-    cidade VARCHAR(30),
-    estado VARCHAR(20),
-    pais VARCHAR(20),
-    fkEmpresa INT NOT NULL,
-    CONSTRAINT fkEnderecoEmpresa FOREIGN KEY(fkEmpresa) REFERENCES empresa(id)
-);
-
-CREATE TABLE funcionario(
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    fkEmpresa INT NOT NULL,
-    nome VARCHAR(50),
-    sobrenome VARCHAR(50),
-    telefone VARCHAR(11),
-    email VARCHAR(100) UNIQUE,
-    senha VARCHAR(250),
-    statusPerfil ENUM("Inativo", "Ativo") NOT NULL DEFAULT("Ativo"),
-    fkCargo INT NOT NULL,
-    caminhoImagem VARCHAR(500) DEFAULT("../assets/img/foto-usuario.png"),
-    CONSTRAINT fkEmpresaFuncionario FOREIGN KEY(fkEmpresa) REFERENCES empresa(id),
-    CONSTRAINT fkCargoFuncionario FOREIGN KEY(fkCargo) REFERENCES cargo(id)
-);
-
-CREATE TABLE lote(
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    codigo_lote VARCHAR(50) UNIQUE,
-    data_fabricacao DATE,
-    fkEmpresa INT,
-    status ENUM('Ativo','Manutenção','Inativo'),
-    CONSTRAINT fkEmpresaLote FOREIGN KEY(fkEmpresa) REFERENCES empresa(id),
-    UNIQUE KEY uk_lote_empresa (codigo_lote, fkEmpresa)
-);
-
-CREATE TABLE modelo(
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    nome VARCHAR(50),
-    status ENUM('Ativo','Descontinuado'),
-    versaoPilotoAutomatico VARCHAR(45),
-    fkEmpresa int,
-    CONSTRAINT fkEmpresaModelo FOREIGN KEY(fkEmpresa) REFERENCES empresa(id),
-    UNIQUE KEY uk_modelo_empresa (nome, versaoPilotoAutomatico, fkEmpresa)
-);
-
-CREATE TABLE veiculo(
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    fkModelo INT NOT NULL,
-    fkLote INT NOT NULL,
-    data_ativacao DATE,
-    quantidade_modelo INT,
-    CONSTRAINT fkModeloVeiculo FOREIGN KEY(fkModelo) REFERENCES modelo(id),
-    CONSTRAINT fkLoteVeiculo FOREIGN KEY(fkLote) REFERENCES lote(id)
-);
-
-CREATE TABLE hardware(
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    tipo ENUM('CPU','RAM','DISCO')
-);
-
-CREATE TABLE parametroHardware(
-    fkHardware INT,
-    fkModelo INT,
-    unidadeMedida VARCHAR(15),
-    parametroMinimo INT,
-    parametroNeutro INT,
-    parametroAtencao INT,
-    parametroCritico INT,
-    CONSTRAINT fkHardwareParametro FOREIGN KEY(fkHardware) REFERENCES hardware(id),
-    CONSTRAINT fkModeloParametro FOREIGN KEY(fkModelo) REFERENCES modelo(id),
-    PRIMARY KEY(fkHardware, fkModelo, unidadeMedida)
-);
-
-INSERT INTO cargo (titulo) VALUES
-('Administrador'),
-('Engenheiro automotivo'),
-('Engenheiro de qualidade');
-
-INSERT INTO empresa (razaoSocial, cnpj, codigo_ativacao) VALUES
-('Tech Solutions LTDA', '12345678000195', 'ABC123'),
-('Auto Veículos S.A.', '98765432000189', 'XYZ987');
-
-INSERT INTO endereco (rua, numero, cep, bairro, cidade, estado, pais, fkEmpresa) VALUES 
-('Rua das Flores', 123, '12345678', 'Centro', 'São Paulo', 'SP', 'Brasil', 1),
-('Av. Paulista', 1000, '87654321', 'Bela Vista', 'São Paulo', 'SP', 'Brasil', 2);
-
-INSERT INTO funcionario (fkEmpresa, nome, sobrenome, telefone, statusPerfil, email, senha, fkCargo) VALUES 
-(1, 'Carlos', 'Silva', '11987654321', 'Ativo', 'carlos.silva@tech.com', 'senha123', 1),
-(2, 'Ana', 'Oliveira', '11987654322', 'Ativo', 'ana.oliveira@auto.com', 'senha456', 2),
-(1, 'Gabriel', 'Santos', '11982654321', 'Ativo', 'gabriel.santos@tech.com', 'senha143', 3);
-
-INSERT INTO hardware (tipo) VALUES ('CPU'), ('RAM'), ('DISCO');
-EOF_SQL
-
-# ===== Dockerfile =====
-cat <<'EOF_DOCKER' > Dockerfile
-FROM mysql:8.0
-LABEL maintainer="Guilherme Vitor"
-COPY navix.sql /docker-entrypoint-initdb.d/
-EXPOSE 3306
-EOF_DOCKER
-
-# ===== Build e Run =====
-sudo docker build -t navix-mysql .
-sudo docker run -d \
-  --name mysql-navix \
-  -e MYSQL_ROOT_PASSWORD=sptech \
-  -p 3306:3306 \
-  navix-mysql
-
-echo "Container MySQL iniciado com sucesso!"
-EOF_USERDATA
+echo "Setup concluído com sucesso!"
+'
 
 # ====== CRIAR INSTÂNCIA EC2 ======
 idInstancia=$(aws ec2 run-instances \
@@ -223,6 +120,27 @@ idInstancia=$(aws ec2 run-instances \
  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=NavixServer-$sufixo}]" \
  --query "Instances[0].InstanceId" --output text)
 
+# ====== OBTENDO O IP PÚBLICO DA INSTÂNCIA EC2 ======
+ipInstancia=$(aws ec2 describe-instances \
+  --region $regiao \
+  --instance-ids $idInstancia \
+  --query "Reservations[0].Instances[0].PublicIpAddress" \
+  --output text)
+
+echo "A instância EC2 está disponível no IP: $ipInstancia"
+
+# ====== TRANSFERIR O ARQUIVO compose.yaml PARA A INSTÂNCIA EC2 ======
+echo "Transferindo o arquivo compose.yaml para a instância EC2..."
+scp -i "$nomeChavePem.pem" compose.yaml ubuntu@$ipInstancia:/home/ubuntu/compose.yaml
+
+# ====== RODAR O DOCKER COMPOSE NA INSTÂNCIA EC2 ======
+echo "Rodando o compose na instância EC2..."
+ssh -i "$nomeChavePem.pem" ubuntu@$ipInstancia << EOF
+  cd /home/ubuntu
+  sudo compose -f compose.yaml up -d
+EOF
+
+# ====== LISTANDO ======
 echo "Instância criada com ID: $idInstancia"
 echo "============================================="
 echo "Buckets criados:"
